@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My ツール集</title>
+<style>
+  :root{
+    --ink:#f6f7fb;
+    --panel: rgba(0,0,0,.55);
+    --line: rgba(255,255,255,.12);
+    --accent:#8ef0ff;
+  }
+  html,body{height:100%;margin:0}
+  body{
+    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAXElEQVQoz2NgoCbg4uJ/5z8jw6mZkYGB4V8xYMBgYJwGg2gYw2fRrQxGgZJg4H9mJgYGBgYGJYwGm5cP5k0YHk2JgYGB4Q8mA0Qw0aG0gGmE8w1oGJg0aYz8GxgYGBkYjGQkZj+Qy0aBvQkAq2IYw9Y5e5zQb6QAB8TrqI2X3u0gAAAABJRU5ErkJggg==');
+    image-rendering: pixelated;
+    background-size: 64px 64px;
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .panel{
+    max-width: 760px; width: calc(100% - 32px);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 8px 40px rgba(0,0,0,.35);
+  }
+  h1{margin:0 0 12px; font-size: 18px; letter-spacing: .02em}
+  p.lead{margin:0 0 14px; color: #e1ecffcc; font-size: 14px}
+  ul.apps{list-style:none; padding:0; margin: 0; display:grid; gap:10px}
+  ul.apps li a{
+    display:flex; align-items:center; gap:10px;
+    text-decoration:none; color: var(--ink);
+    padding: 12px 14px; border:1px solid var(--line);
+    border-radius:12px; background: rgba(0,0,0,.25);
+    transition: transform .12s, box-shadow .12s, border-color .12s;
+  }
+  ul.apps li a:hover{ transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.35); border-color: rgba(255,255,255,.25) }
+  .badge{ font-size: 12px; padding: 3px 8px; border-radius:999px; border:1px solid var(--line); background: rgba(255,255,255,.08)}
+  .emoji{ font-size: 18px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.35)); }
+  .hint{ margin-top: 12px; font-size: 12px; color: #d9e6ffb8 }
+  .hint code{ color: #fff; background: rgba(0,0,0,.35); padding: 2px 6px; border-radius: 6px; }
+  .split{height:1px; background: var(--line); margin: 14px 0}
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .small{font-size:12px;opacity:.85}
+</style>
+</head>
+<body>
+  <main class="panel">
+    <div class="topbar">
+      <h1>🌱 My ツール集</h1>
+      <div class="small" id="sourceInfo">読み込み：apps.json</div>
+    </div>
+    <p class="lead">このページは <code>apps.json</code>（存在しない場合は内蔵データ）から自動生成されます。新しいツールを追加したら <code>apps.json</code> に1行追記するだけ。</p>
+    <ul class="apps" id="appList"></ul>
+    <div class="split"></div>
+    <div class="hint">
+      例のエントリ（apps.json）:
+      <code>{ "title": "買い出し＆予算", "href": "shopping_budget_app.html", "desc": "常備＆今回だけ＋残額メーター", "emoji": "🛒" }</code>
+    </div>
+  </main>
+
+  <!-- フォールバック用の内蔵データ（apps.jsonが無いときだけ使われる） -->
+  <script id="APPS_FALLBACK" type="application/json">
+  [
+    { "title": "習慣化ルーティン表", "href": "routine_app.html", "desc": "曜日×ルーティン／週単位保存", "emoji": "📅" },
+    { "title": "買い出し＆予算トラッカー", "href": "shopping_budget_app.html", "desc": "常備＆今回だけ＋ご褒美アラート", "emoji": "🛒" }
+  ]
+  </script>
+
+<script>
+(async()=>{
+  const listEl = document.getElementById('appList');
+  const srcEl  = document.getElementById('sourceInfo');
+  let apps = null;
+  // 1) try to load apps.json (same repo root)
+  try{
+    const res = await fetch('apps.json', {cache:'no-store'});
+    if(res.ok){
+      apps = await res.json();
+      srcEl.textContent = '読み込み：apps.json（外部ファイル）';
+    }
+  }catch(e){ /* ignore */ }
+  // 2) fallback
+  if(!apps){
+    apps = JSON.parse(document.getElementById('APPS_FALLBACK').textContent);
+    srcEl.textContent = '読み込み：内蔵データ（apps.json が無い）';
+  }
+  // render
+  const frag = document.createDocumentFragment();
+  apps.forEach(app => {
+    const li = document.createElement('li');
+    const a  = document.createElement('a');
+    a.href = app.href;
+    a.innerHTML = `
+      <span class="emoji">${app.emoji || '🔗'}</span>
+      <div>
+        <div><strong>${app.title}</strong> <span class="badge">${app.href}</span></div>
+        <div style="font-size:12px;opacity:.85">${app.desc || ''}</div>
+      </div>`;
+    li.appendChild(a);
+    frag.appendChild(li);
+  });
+  listEl.innerHTML='';
+  listEl.appendChild(frag);
+})();
+</script>
+</body>
+</html>
