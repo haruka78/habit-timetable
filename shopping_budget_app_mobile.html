@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>買い出し＆予算トラッカー（モバイル最適化）</title>
+<style>
+  :root{
+    --bg:#0b0c0f; --ink:#e6e9ef; --muted:#9aa4b2; --card:#121520; --line:#23283a;
+    --acc:#5cc8ff; --ok:#4ade80; --warn:#f59e0b; --danger:#f87171;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif}
+  .wrap{max-width:980px;margin:14px auto;padding:0 12px}
+  h1{font-size:18px;margin:8px 0 12px}
+  h2{font-size:15px;margin:0 0 8px;color:#cfe9ff}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  input,select,button{border:1px solid var(--line);background:#0f1320;color:var(--ink);border-radius:10px;padding:10px 12px;font-size:15px}
+  button{cursor:pointer;transition:.12s}
+  button:hover{transform:translateY(-1px);box-shadow:0 6px 14px rgba(92,200,255,.12)}
+  .btn.primary{background:#143851;border-color:#235e7a;color:#c9edff}
+  .btn.warn{background:#3b2a12;border-color:#6b4e1e;color:#ffe9b5}
+  .btn.danger{background:#3a1616;border-color:#6b2020;color:#ffd2d2}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+  .tab{padding:10px 12px;border:1px solid var(--line);border-radius:999px;background:#0f1320;color:var(--ink);cursor:pointer}
+  .tab.active{background:#0b1b2a;border-color:#264257;color:#cfe9ff}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+  .item{display:grid;grid-template-columns: 1fr 90px 80px 36px 36px; gap:8px; align-items:center; padding:10px; border:1px solid var(--line); border-radius:12px; background:#0f1326}
+  .item input[type="text"]{width:100%}
+  .item input[type="number"]{width:100%; text-align:right; -moz-appearance: textfield;}
+  .item input[type=number]::-webkit-outer-spin-button,
+  .item input[type=number]::-webkit-inner-spin-button{ -webkit-appearance: none; margin: 0; }
+  .item .name{display:flex;align-items:center;gap:8px}
+  .item .name label{display:flex;align-items:center;gap:8px}
+  .item .del{background:transparent;border:none;color:#ffb4b4;cursor:pointer;font-size:18px;line-height:1}
+  .item .tmp{background:transparent;border:none;color:#ffe29a;cursor:default;font-size:14px}
+  .sumline{display:flex;gap:8px;align-items:center;padding:8px;border:1px solid var(--line);border-radius:12px;background:#0f1424;flex:1}
+  .sumline strong{font-size:16px}
+  .progress{height:12px;background:#0e1322;border-radius:999px;overflow:hidden;border:1px solid var(--line);flex:1}
+  .progress > div{height:100%}
+  .ok{background:linear-gradient(90deg,#105326,#1d7a3a)}
+  .mid{background:linear-gradient(90deg,#5a4a13,#8a6f1e)}
+  .over{background:linear-gradient(90deg,#6b1b1b,#a83232)}
+  .chip{padding:6px 10px;border-radius:999px;border:1px solid #2a3552;background:#121a2c}
+  .right{margin-left:auto}
+  .footer{margin-top:6px;color:var(--muted);font-size:12px}
+
+  /* ===== Responsive tweaks for phones ===== */
+  @media (max-width: 520px){
+    .bar{gap:6px}
+    .item{grid-template-columns: 1fr 90px 36px 36px; }
+    /* Hide subtotal column (3rd) on phone, keep actions */
+    .item > :nth-child(3){ display:none; }
+    .item .name input[type="text"]{font-size:16px}
+    .tabs{overflow:auto}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>買い出し＆予算トラッカー</h1>
+  <div class="card bar">
+    <div>基準日：<input type="date" id="datePick"></div>
+    <button class="btn" id="prevPeriod">← 前の期間</button>
+    <button class="btn" id="nextPeriod">次の期間 →</button>
+    <span id="periodLabel" class="muted"></span>
+    <span class="right chip" id="saveHint">ローカル保存</span>
+  </div>
+
+  <div class="card">
+    <div class="tabs" id="tabs"></div>
+
+    <div id="categoryPanel"></div>
+  </div>
+</div>
+
+<script>
+(()=>{
+  // Category definitions
+  const CATS = [
+    { id:'super',  name:'近所スーパー（週1）',     cycle:'week' },
+    { id:'veggie', name:'八百屋（月2）',          cycle:'halfmonth' },
+    { id:'online', name:'ネットスーパー（月1）',   cycle:'month' },
+    { id:'reserve',name:'予備費（調味料系）',      cycle:'month' }
+  ];
+
+  // Storage
+  const KEY='buylist_v3_mobile';
+  function load(){ try{ return JSON.parse(localStorage.getItem(KEY)) || null }catch{ return null } }
+  function save(){ localStorage.setItem(KEY, JSON.stringify(state)) }
+
+  // Initial state
+  let state = load() || {
+    currentDate: toISO(new Date()),
+    budgets: { super:1500, veggie:1000, online:6000, reserve:4000 },
+    // treat alert
+    treat: { super:{on:true, threshold:200}, veggie:{on:true, threshold:200}, online:{on:true, threshold:200}, reserve:{on:true, threshold:200} },
+    items: {
+      super:  [{id:uid(), name:'牛乳', price:220},{id:uid(), name:'卵', price:200},{id:uid(), name:'豆腐', price:80}],
+      veggie: [{id:uid(), name:'玉ねぎ', price:150},{id:uid(), name:'ほうれん草', price:120}],
+      online: [{id:uid(), name:'鶏むね 2kg', price:1500, note:'月1'}, {id:uid(), name:'冷凍ブロッコリー', price:300}],
+      reserve:[{id:uid(), name:'醤油', price:300},{id:uid(), name:'みりん', price:250}]
+    },
+    period: {}
+  };
+
+  // Date & period helpers
+  function toISO(d){ const x=new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setMinutes(x.getMinutes()-x.getTimezoneOffset()); return x.toISOString().slice(0,10) }
+  function fromISO(s){ return new Date(s+'T00:00:00') }
+  function mondayISO(iso){
+    const d = fromISO(iso);
+    const js = d.getDay(); // 0 Sun..6 Sat
+    const idx = (js===0?6:js-1); // Mon=0..Sun=6
+    d.setDate(d.getDate()-idx);
+    return toISO(d);
+  }
+  function monthKey(iso){ return iso.slice(0,7) } // YYYY-MM
+  function halfMonthKey(iso){
+    const m = monthKey(iso);
+    const d = parseInt(iso.slice(8,10),10);
+    return m + (d<=15 ? '-H1' : '-H2');
+  }
+  function periodKey(catId, iso){
+    const cat = CATS.find(c=>c.id===catId);
+    if(cat.cycle==='week') return catId+'|'+mondayISO(iso);
+    if(cat.cycle==='halfmonth') return catId+'|'+halfMonthKey(iso);
+    if(cat.cycle==='month') return catId+'|'+monthKey(iso);
+    return catId+'|'+iso;
+  }
+  function labelForPeriod(catId, iso){
+    const cat = CATS.find(c=>c.id===catId);
+    if(cat.cycle==='week'){ const m=mondayISO(iso); const end=toISO(new Date(fromISO(m).getTime()+6*86400000)); return `週：${m}〜${end}`; }
+    if(cat.cycle==='halfmonth'){ const hm=halfMonthKey(iso); return `半月：${hm.replace('-',' / ')}`; }
+    if(cat.cycle==='month'){ const mo=monthKey(iso); return `月：${mo}`; }
+    return iso;
+  }
+  function shiftBaseDate(delta){
+    const d = fromISO(state.currentDate);
+    d.setDate(d.getDate()+delta);
+    state.currentDate = toISO(d);
+    save(); render();
+  }
+
+  // UI refs
+  const tabsEl = document.getElementById('tabs');
+  const panelEl = document.getElementById('categoryPanel');
+  const datePick = document.getElementById('datePick');
+  const prevBtn = document.getElementById('prevPeriod');
+  const nextBtn = document.getElementById('nextPeriod');
+  const periodLabel = document.getElementById('periodLabel');
+
+  let activeCat = CATS[0].id;
+
+  // Build tabs
+  function renderTabs(){
+    tabsEl.innerHTML='';
+    CATS.forEach(c=>{
+      const b=document.createElement('button');
+      b.className='tab'+(activeCat===c.id?' active':'');
+      b.textContent=c.name;
+      b.onclick=()=>{ activeCat=c.id; render(); };
+      tabsEl.appendChild(b);
+    });
+  }
+
+  // Ensure period state
+  function ensurePeriod(catId){
+    const key = periodKey(catId, state.currentDate);
+    if(!state.period[key]) state.period[key] = { checked:{}, temp:[] };
+    return state.period[key];
+  }
+
+  // Sum helpers
+  function calcSums(catId){
+    const per = ensurePeriod(catId);
+    const base = state.items[catId] || [];
+    const allItems = base.concat(per.temp || []);
+    const planned = allItems.reduce((s,i)=>s+(Number(i.price)||0),0);
+    const spent = Object.entries(per.checked).reduce((s,[id, ok])=>{
+      if(!ok) return s;
+      const it = allItems.find(x=>x.id===id);
+      if(!it) return s;
+      return s + (Number(it.price)||0);
+    },0);
+    return { planned, spent, remaining: (state.budgets[catId]||0) - spent, items: allItems };
+  }
+
+  function renderCategory(){
+    const catId = activeCat;
+    const per = ensurePeriod(catId);
+    const sums = calcSums(catId);
+
+    panelEl.innerHTML='';
+    const card = document.createElement('div'); card.className='card';
+
+    const head = document.createElement('div'); head.className='row';
+    const budgetInput = document.createElement('input'); budgetInput.type='number'; budgetInput.min='0'; budgetInput.placeholder='予算（円）'; budgetInput.value = state.budgets[catId]||0;
+    budgetInput.onchange=()=>{ state.budgets[catId]=Number(budgetInput.value)||0; save(); renderCategory(); };
+
+    const sumsLine = document.createElement('div'); sumsLine.className='sumline'; sumsLine.style.flex='1';
+    const rate = state.budgets[catId] ? Math.min(1, Math.max(0, sums.spent / state.budgets[catId])) : 0;
+    const pbar = document.createElement('div'); pbar.className='progress';
+    const fill = document.createElement('div'); fill.style.width=(rate*100)+'%'; fill.className= rate<0.7 ? 'ok' : (rate<=1? 'mid':'over');
+    pbar.appendChild(fill);
+    const nums = document.createElement('div'); nums.innerHTML = `<strong>¥${fmt(sums.spent)}</strong> / 予算 ¥${fmt(state.budgets[catId]||0)}　（残り ¥${fmt(sums.remaining)}）`;
+    sumsLine.appendChild(nums); sumsLine.appendChild(pbar);
+
+    const periodTag = document.createElement('span'); periodTag.className='chip'; periodTag.textContent = labelForPeriod(catId, state.currentDate);
+
+    head.appendChild(document.createTextNode('予算'));
+    head.appendChild(budgetInput);
+    head.appendChild(sumsLine);
+    head.appendChild(periodTag);
+    card.appendChild(head);
+
+    const list = document.createElement('div'); list.className='list';
+    const hdr = document.createElement('div'); hdr.className='item'; hdr.style.background='#0d1020';
+    hdr.innerHTML = `<div class="name"><span class="muted">品目</span></div><div class="muted" style="text-align:right">単価</div><div class="muted" style="text-align:right">小計</div><div></div><div></div>`;
+    list.appendChild(hdr);
+
+    function rowFor(it, isTemp){
+      const row=document.createElement('div'); row.className='item';
+      const name=document.createElement('div'); name.className='name';
+      const lab=document.createElement('label');
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.checked = !!per.checked[it.id];
+      cb.onchange=()=>{ per.checked[it.id]=cb.checked; save(); renderCategory(); };
+      const txt=document.createElement('input'); txt.type='text'; txt.value=it.name; txt.placeholder='品目名';
+      txt.onchange=()=>{ it.name = txt.value; save(); };
+      lab.appendChild(cb); lab.appendChild(txt);
+      name.appendChild(lab);
+
+      const price=document.createElement('input'); price.type='number'; price.min='0'; price.step='1'; price.placeholder='¥'; price.value = it.price||0;
+      price.onchange=()=>{ it.price = Number(price.value)||0; save(); renderCategory(); };
+
+      const sub=document.createElement('div'); sub.style.textAlign='right'; sub.textContent='¥'+fmt(Number(it.price)||0);
+
+      const tmpMark=document.createElement('button'); tmpMark.className='tmp'; tmpMark.title = isTemp? '今回だけ':'常備（毎回表示）';
+      tmpMark.textContent = isTemp? '今' : '常';
+
+      const del=document.createElement('button'); del.className='del'; del.title='削除'; del.textContent='×';
+      del.onclick=()=>{
+        if(isTemp){
+          per.temp = per.temp.filter(x=>x.id!==it.id);
+        }else{
+          state.items[catId] = state.items[catId].filter(x=>x.id!==it.id);
+        }
+        delete per.checked[it.id];
+        save(); renderCategory();
+      };
+
+      row.appendChild(name);
+      row.appendChild(price);
+      row.appendChild(sub);
+      row.appendChild(tmpMark);
+      row.appendChild(del);
+      return row;
+    }
+
+    const base = state.items[catId] || [];
+    base.forEach(it=> list.appendChild(rowFor(it,false)));
+    (per.temp||[]).forEach(it=> list.appendChild(rowFor(it,true)));
+
+    card.appendChild(list);
+
+    const adder=document.createElement('div'); adder.className='row'; adder.style.marginTop='10px';
+    const t1=document.createElement('input'); t1.type='text'; t1.placeholder='品目名（例：お菓子、パン…）'; t1.style.flex='2';
+    const t2=document.createElement('input'); t2.type='number'; t2.placeholder='単価'; t2.style.flex='1';
+    const sel=document.createElement('select');
+    [['base','常備（毎回）'],['temp','今回だけ']].forEach(([v,lab])=>{ const o=document.createElement('option'); o.value=v; o.textContent=lab; sel.appendChild(o); });
+    const addBtn=document.createElement('button'); addBtn.className='btn primary'; addBtn.textContent='＋ 追加';
+    addBtn.onclick=()=>{
+      const name=t1.value.trim(); const price=Number(t2.value)||0;
+      if(!name) return;
+      const obj={id:uid(), name, price, note:''};
+      if(sel.value==='temp'){ ensurePeriod(catId).temp.push(obj); }
+      else{ state.items[catId] = state.items[catId] || []; state.items[catId].push(obj); }
+      t1.value=''; t2.value=''; save(); renderCategory();
+    };
+    adder.appendChild(t1); adder.appendChild(t2); adder.appendChild(sel); adder.appendChild(addBtn);
+    card.appendChild(adder);
+
+    const bottom=document.createElement('div'); bottom.className='row'; bottom.style.marginTop='10px';
+    const clr=document.createElement('button'); clr.className='btn'; clr.textContent='この期間のチェックをクリア';
+    clr.onclick=()=>{ if(confirm('この期間の「購入済み」チェックを全て外しますか？')){ const p=ensurePeriod(catId); p.checked={}; save(); renderCategory(); } };
+    const clrTmp=document.createElement('button'); clrTmp.className='btn warn'; clrTmp.textContent='この期間の「今回だけ」を全削除';
+    clrTmp.onclick=()=>{ if(confirm('今回だけ（この期間限定）の品目を全て削除しますか？')){ const p=ensurePeriod(catId); p.temp=[]; save(); renderCategory(); } };
+    bottom.appendChild(clr); bottom.appendChild(clrTmp);
+
+    panelEl.appendChild(card);
+
+    periodLabel.textContent = '基準日 '+state.currentDate+' ／ '+labelForPeriod(catId, state.currentDate);
+  }
+
+  function render(){
+    renderTabs();
+    renderCategory();
+    datePick.value = state.currentDate;
+  }
+
+  // Helpers
+  function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36) }
+  function fmt(n){ return (Number(n)||0).toLocaleString('ja-JP') }
+
+  // Events
+  datePick.addEventListener('change', e=>{
+    const iso = e.target.value;
+    if(!iso) return;
+    state.currentDate = iso; save(); render();
+  });
+  prevBtn.addEventListener('click', ()=>{
+    const cat=CATS.find(c=>c.id===activeCat);
+    const d=fromISO(state.currentDate);
+    if(cat.cycle==='week'){ d.setDate(d.getDate()-7); }
+    else if(cat.cycle==='halfmonth'){
+      const day=d.getDate();
+      if(day<=15){ d.setMonth(d.getMonth()-1); d.setDate(20); }
+      else{ d.setDate(5); }
+    } else if(cat.cycle==='month'){ d.setMonth(d.getMonth()-1); }
+    state.currentDate = toISO(d); save(); render();
+  });
+  nextBtn.addEventListener('click', ()=>{
+    const cat=CATS.find(c=>c.id===activeCat);
+    const d=fromISO(state.currentDate);
+    if(cat.cycle==='week'){ d.setDate(d.getDate()+7); }
+    else if(cat.cycle==='halfmonth'){
+      const day=d.getDate();
+      if(day<=15){ d.setDate(20); } else { d.setMonth(d.getMonth()+1); d.setDate(5); }
+    } else if(cat.cycle==='month'){ d.setMonth(d.getMonth()+1); }
+    state.currentDate = toISO(d); save(); render();
+  });
+
+  // First paint
+  render();
+})();
+</script>
+</body>
+</html>
